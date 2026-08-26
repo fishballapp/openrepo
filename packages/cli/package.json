@@ -1,6 +1,6 @@
 {
   "name": "@openrepo/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Open up your repo: eject a standalone workspace from a private monorepo.",
   "license": "MIT",

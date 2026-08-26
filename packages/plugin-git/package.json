@@ -1,6 +1,6 @@
 {
   "name": "@openrepo/plugin-git",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "openrepo plugin: commit the ejected tree into a clone of the public repo, ready to push.",
   "license": "MIT",
