@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.tsbuildinfo",
+    "types": ["node"],
+    // Run by node directly (the bin and the config import); relative imports carry `.ts`.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts"]
+}

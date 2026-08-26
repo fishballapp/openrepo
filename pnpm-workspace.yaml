@@ -1,0 +1,26 @@
+packages:
+  - packages/cli
+  - packages/plugin-git
+  - packages/plugin-pnpm
+  - packages/plugin-typescript
+autoInstallPeers: true
+strictPeerDependencies: false
+minimumReleaseAge: 10080
+catalogMode: strict
+cleanupUnusedCatalogs: true
+overrides:
+  "@types/node": "catalog:"
+allowBuilds:
+  "@biomejs/biome": true
+  esbuild: true
+catalog:
+  "@biomejs/biome": ^2.4.15
+  "@stricli/core": ^1.2.7
+  "@types/node": ^24.0.0
+  jsonc-parser: ^3.3.1
+  repojj: ^2026.1.35
+  tsdown: ^0.22.3
+  typescript: ~6.0.3
+  vitest: ^4.1.5
+  yaml: ^2.6.0
+  zod: ^4.4.3

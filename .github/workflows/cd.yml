@@ -1,0 +1,35 @@
+name: Publish
+
+# Every push to main publishes whatever package versions npm does not have yet. Bump a version,
+# eject, and the release follows. No token: npm trusted publishing over the workflow's OIDC
+# identity, configured per package on npmjs.com.
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    # GitHub-hosted on purpose: npm trusted publishing (the OIDC exchange below) does not work on
+    # self-hosted runners, Blacksmith included.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      # Each package builds itself in `prepack`; this is only so a build failure reads as one.
+      - run: pnpm build
+      - id: version
+        run: |
+          VERSION=$(node -p "require('./packages/cli/package.json').version")
+          TAG=$(echo "$VERSION" | grep -oE 'alpha|beta|rc' || true)
+          echo "tag=${TAG:-latest}" >> "$GITHUB_OUTPUT"
+      - run: pnpm -r publish --tag ${{ steps.version.outputs.tag }}
