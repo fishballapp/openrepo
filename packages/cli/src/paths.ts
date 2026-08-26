@@ -21,9 +21,11 @@ export const mapPaths = (
       throw new Error(`${pub} would come from both ${existing} and ${priv}`);
     entries.set(pub, priv);
   };
-  // A `files` key names a file or a directory; a directory moves with everything under it.
+  // A `files` key names a file or a directory; a directory moves with everything under it, and
+  // the most specific key wins, so an entry for a sub-path is never shadowed by its parent's.
+  const keys = Object.keys(files).toSorted((a, b) => b.length - a.length);
   for (const priv of selected) {
-    const key = Object.keys(files).find(k => priv === k || priv.startsWith(`${k}/`));
+    const key = keys.find(k => priv === k || priv.startsWith(`${k}/`));
     add(key === undefined ? stripRoot(root, priv) : `${files[key]}${priv.slice(key.length)}`, priv);
   }
   return entries;

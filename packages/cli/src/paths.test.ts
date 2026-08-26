@@ -36,6 +36,15 @@ describe('mapPaths', () => {
     ]);
   });
 
+  it('the most specific files key wins, whatever the declaration order', () => {
+    const m = mapPaths(['packages/cn/legacy/a.ts', 'packages/cn/b.ts'], 'projects/x', {
+      'packages/cn': 'internal/cn',
+      'packages/cn/legacy': 'vendor/legacy',
+    });
+    expect(m.get('vendor/legacy/a.ts')).toBe('packages/cn/legacy/a.ts');
+    expect(m.get('internal/cn/b.ts')).toBe('packages/cn/b.ts');
+  });
+
   it('refuses two sources on one public path', () => {
     expect(() =>
       mapPaths(['projects/x/packages/cn/a.ts', 'packages/cn/a.ts'], 'projects/x', {}),
