@@ -5,6 +5,11 @@
   "description": "openrepo plugin: commit the ejected tree into a clone of the public repo, ready to push.",
   "license": "MIT",
   "homepage": "https://github.com/fishballapp/openrepo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fishballapp/openrepo.git",
+    "directory": "packages/plugin-git"
+  },
   "files": [
     "dist",
     "README.md"

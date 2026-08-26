@@ -5,6 +5,11 @@
   "description": "openrepo plugin: pnpm workspace graph, pnpm-workspace.yaml subset and pruned lockfile.",
   "license": "MIT",
   "homepage": "https://github.com/fishballapp/openrepo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fishballapp/openrepo.git",
+    "directory": "packages/plugin-pnpm"
+  },
   "files": [
     "dist",
     "README.md"

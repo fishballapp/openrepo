@@ -5,6 +5,11 @@
   "description": "openrepo plugin: re-points tsconfig `extends` and project references across the ejected layout.",
   "license": "MIT",
   "homepage": "https://github.com/fishballapp/openrepo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fishballapp/openrepo.git",
+    "directory": "packages/plugin-typescript"
+  },
   "files": [
     "dist",
     "README.md"

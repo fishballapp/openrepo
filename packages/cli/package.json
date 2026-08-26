@@ -5,6 +5,11 @@
   "description": "Open up your repo: eject a standalone workspace from a private monorepo.",
   "license": "MIT",
   "homepage": "https://github.com/fishballapp/openrepo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fishballapp/openrepo.git",
+    "directory": "packages/cli"
+  },
   "files": [
     "dist",
     "README.md"
