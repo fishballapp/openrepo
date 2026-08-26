@@ -135,7 +135,7 @@ on top of the previous one in the same clone.
 | --- | --- |
 | `root` | Directory that becomes the public root. Files under it lose the prefix; other files keep their path. |
 | `include` / `exclude` | git pathspecs: directories, files, `*` and `**` work like in `.gitignore`. `exclude` always wins, even over packages pulled in as dependencies. |
-| `files` | `{ [privateFile]: publicPath }` for the odd file that has to live outside `root` in the monorepo, such as a CI workflow the monorepo also runs. |
+| `files` | `{ [privatePath]: publicPath }` for a file or a directory that has to land somewhere other than its default: a CI workflow the monorepo also runs, or a shared package pulled in from outside `root` that should sit under `internal/` rather than keep its monorepo path. A directory moves with everything under it. |
 | `outDir` | Where the result goes. Default is a directory under the OS temp dir, printed on every run. The directory must not exist yet, or must be one a previous eject wrote (it leaves a `.openrepo` marker). Anything else is refused. |
 | `emptyOutDir` | `true` to wipe an existing `outDir` that OpenRepo didn't write. Same idea as Vite's option of the same name. Default `false`. |
 | `plugins` | The plugins, in the order their hooks should run. |
@@ -236,6 +236,10 @@ but isn't. Today it assumes:
   outside the exported files (`include`, `paths`, `rootDir`) are left alone; the public repo's
   typecheck will show if one is wrong.
 - No symlinks, no submodules, and no files that `.gitattributes` marks `export-ignore`.
+- Optional peer dependencies stay resolved the way your private lockfile resolved them. pnpm 11
+  satisfies an optional peer from anywhere in the graph, so a package only a sibling project needed
+  can remain in the public lockfile, keyed differently. Versions never change; the public tree may
+  install more than it strictly needs.
 - Windows is untested.
 
 If your monorepo doesn't fit, [open an issue](https://github.com/fishballapp/openrepo/issues) and

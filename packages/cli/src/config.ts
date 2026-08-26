@@ -32,7 +32,7 @@ export const ExportConfigSchema = z.object({
   include: z.array(z.string().min(1)).min(1),
   /** git pathspecs. A deny rule: re-applied after workspace deps are pulled in. */
   exclude: z.array(z.string().min(1)).default([]),
-  /** Private tracked file → public path. Added to the selection; its default mapping is replaced. */
+  /** Private tracked file or directory → public path. Added to the selection; its default mapping is replaced. */
   files: z.record(PublicPath, PublicPath).default({}),
   plugins: z
     .array(

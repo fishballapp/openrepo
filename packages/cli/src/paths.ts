@@ -21,8 +21,11 @@ export const mapPaths = (
       throw new Error(`${pub} would come from both ${existing} and ${priv}`);
     entries.set(pub, priv);
   };
-  for (const priv of selected) if (!(priv in files)) add(stripRoot(root, priv), priv);
-  for (const [priv, pub] of Object.entries(files)) add(pub, priv);
+  // A `files` key names a file or a directory; a directory moves with everything under it.
+  for (const priv of selected) {
+    const key = Object.keys(files).find(k => priv === k || priv.startsWith(`${k}/`));
+    add(key === undefined ? stripRoot(root, priv) : `${files[key]}${priv.slice(key.length)}`, priv);
+  }
   return entries;
 };
 

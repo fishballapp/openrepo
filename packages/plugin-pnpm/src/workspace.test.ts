@@ -160,6 +160,55 @@ describe('assertOnlyPruned', () => {
       assertOnlyPruned(before, parseLockfile({ packages: { 'a@1': { x: 2 } }, snapshots: {} })),
     ).toThrow(/changed/);
   });
+  it('accepts a snapshot re-keyed by its peers when every version is unchanged', () => {
+    const peers = parseLockfile({
+      packages: { 'a@1': { x: 1, peerDependencies: { p: '*' } }, 'p@1': { x: 1 } },
+      snapshots: { 'a@1(p@1)': { dependencies: { p: '1' } }, 'p@1': {} },
+    });
+    expect(() =>
+      assertOnlyPruned(
+        peers,
+        parseLockfile({
+          packages: { 'a@1': { x: 1, peerDependencies: { p: '*' } } },
+          snapshots: { 'a@1': {} },
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertOnlyPruned(
+        peers,
+        parseLockfile({
+          packages: { 'a@1': { x: 1, peerDependencies: { p: '*' } } },
+          snapshots: { 'a@2': {} },
+        }),
+      ),
+    ).toThrow(/new/);
+  });
+  it('refuses an edge that moved between two versions both present before', () => {
+    const two = parseLockfile({
+      packages: { 'a@1': {}, 'b@1': {}, 'b@2': {} },
+      snapshots: { 'a@1': { dependencies: { b: '1' } }, 'b@1': {}, 'b@2': {} },
+    });
+    expect(() =>
+      assertOnlyPruned(
+        two,
+        parseLockfile({
+          packages: { 'a@1': {}, 'b@2': {} },
+          snapshots: { 'a@1': { dependencies: { b: '2' } }, 'b@2': {} },
+        }),
+      ),
+    ).toThrow(/changed/);
+    // The same edge, re-keyed by a peer further down, is the re-keying pnpm does.
+    expect(() =>
+      assertOnlyPruned(
+        two,
+        parseLockfile({
+          packages: { 'a@1': {}, 'b@1': {} },
+          snapshots: { 'a@1(p@1)': { dependencies: { b: '1(p@1)' } }, 'b@1': {} },
+        }),
+      ),
+    ).not.toThrow();
+  });
 });
 
 describe('assertOnlyPruned importers', () => {

@@ -23,6 +23,19 @@ describe('mapPaths', () => {
     expect([...m]).toEqual([['.github/workflows/ci.yml', '.github/workflows/x-ci.yml']]);
   });
 
+  it('a files entry naming a directory moves everything under it', () => {
+    const m = mapPaths(
+      ['packages/cn/package.json', 'packages/cn/src/index.ts', 'projects/x/packages/a/index.ts'],
+      'projects/x',
+      { 'packages/cn': 'internal/cn' },
+    );
+    expect([...m]).toEqual([
+      ['internal/cn/package.json', 'packages/cn/package.json'],
+      ['internal/cn/src/index.ts', 'packages/cn/src/index.ts'],
+      ['packages/a/index.ts', 'projects/x/packages/a/index.ts'],
+    ]);
+  });
+
   it('refuses two sources on one public path', () => {
     expect(() =>
       mapPaths(['projects/x/packages/cn/a.ts', 'packages/cn/a.ts'], 'projects/x', {}),

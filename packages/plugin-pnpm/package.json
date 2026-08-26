@@ -1,6 +1,6 @@
 {
   "name": "@openrepo/plugin-pnpm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "openrepo plugin: pnpm workspace graph, pnpm-workspace.yaml subset and pruned lockfile.",
   "license": "MIT",

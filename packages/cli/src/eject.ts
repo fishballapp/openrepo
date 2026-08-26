@@ -107,7 +107,8 @@ export const eject = async ({
   assertClosed(selected, packages);
   assertRegular(modes, selected);
   for (const key of fileKeys)
-    if (!selected.has(key)) throw new Error(`files: ${key} is not a tracked regular file at HEAD`);
+    if (!selected.has(key) && ![...selected].some(p => p.startsWith(`${key}/`)))
+      throw new Error(`files: ${key} is not a tracked file or directory at HEAD`);
 
   const entries = mapPaths([...selected], config.root, config.files);
   const paths = resolverOf(entries);
