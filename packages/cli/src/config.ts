@@ -34,6 +34,18 @@ export const ExportConfigSchema = z.object({
   exclude: z.array(z.string().min(1)).default([]),
   /** Private tracked file or directory → public path. Added to the selection; its default mapping is replaced. */
   files: z.record(PublicPath, PublicPath).default({}),
+  /**
+   * Known leak findings to allow. `path` is a glob over the public path; `rule` is a scan plugin's
+   * `<plugin name>/<rule>` (`secretlint/github`). Stale entries that match no findings are rejected.
+   */
+  allowLeaks: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        rule: z.string().min(1),
+      }),
+    )
+    .default([]),
   plugins: z
     .array(
       z.custom<Plugin>(v => typeof v === 'object' && v !== null && 'name' in v, 'not a plugin'),

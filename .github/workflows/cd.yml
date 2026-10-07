@@ -1,21 +1,34 @@
-name: Publish
+name: CD
 
-# Every push to main publishes whatever package versions npm does not have yet. Bump a version,
-# eject, and the release follows. No token: npm trusted publishing over the workflow's OIDC
-# identity, configured per package on npmjs.com.
+# Every push to main runs every gate (ci.yml), then publishes whatever package versions npm does
+# not have yet.
+#
+# Keep this filename: npm trusted publishing validates it.
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
+  gates:
+    name: Gates
+    uses: ./.github/workflows/ci.yml
+
+  # No token: npm trusted publishing over the workflow's OIDC identity, configured per package on
+  # npmjs.com.
   publish:
-    # GitHub-hosted on purpose: npm trusted publishing (the OIDC exchange below) does not work on
-    # self-hosted runners, Blacksmith included.
+    name: Publish to npm
+    needs: gates
+    # GitHub-hosted on purpose: npm trusted publishing does not work on self-hosted runners.
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+    concurrency:
+      group: publish
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -25,11 +38,10 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      # Each package builds itself in `prepack`; this is only so a build failure reads as one.
-      - run: pnpm build
       - id: version
         run: |
           VERSION=$(node -p "require('./packages/cli/package.json').version")
           TAG=$(echo "$VERSION" | grep -oE 'alpha|beta|rc' || true)
           echo "tag=${TAG:-latest}" >> "$GITHUB_OUTPUT"
+      # A recursive publish skips a version npm already has. Each package builds dist/ in `prepack`.
       - run: pnpm -r publish --tag ${{ steps.version.outputs.tag }}

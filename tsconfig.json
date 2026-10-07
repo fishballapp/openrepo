@@ -4,6 +4,8 @@
     { "path": "./packages/cli" },
     { "path": "./packages/plugin-pnpm" },
     { "path": "./packages/plugin-typescript" },
-    { "path": "./packages/plugin-git" }
+    { "path": "./packages/plugin-git" },
+    { "path": "./packages/plugin-secretlint" },
+    { "path": "./packages/plugin-local-leaks" }
   ]
 }

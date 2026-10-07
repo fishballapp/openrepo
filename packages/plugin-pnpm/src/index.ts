@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { GenerateContext, Plugin, Repo } from '@openrepo/cli';
 import { parse, stringify } from 'yaml';
-import { assertOnlyPruned, parseLockfile, reachablePatches } from './lockfile.ts';
+import { assertOnlyPruned, parseWorkspaceLockfile, reachablePatches } from './lockfile.ts';
 import {
   type KeptPolicy,
   type Manifest,
@@ -17,10 +17,11 @@ import {
 } from './workspace.ts';
 
 const readPrivate = (repo: Repo, path: string): string => {
-  if (!repo.files.includes(path))
+  if (!repo.files.includes(path)) {
     throw new Error(
       `${path} is not tracked at HEAD; the pnpm plugin needs the private repo's ${path}`,
     );
+  }
   return repo.read(path);
 };
 
@@ -33,8 +34,9 @@ const pnpmVersion = (): string => {
   try {
     return execFileSync('pnpm', ['--version'], { encoding: 'utf8' }).trim();
   } catch (err) {
-    if ((err as { code?: string }).code === 'ENOENT')
+    if ((err as { code?: string }).code === 'ENOENT') {
       throw new Error('pnpm is not on PATH; the pnpm plugin runs it to prune the lockfile');
+    }
     throw err;
   }
 };
@@ -58,14 +60,16 @@ const generate = async (
   settings: SettingsPolicy,
 ): Promise<void> => {
   const source = readWorkspace(repo);
-  if (!existsSync(join(staging, 'package.json')))
+  if (!existsSync(join(staging, 'package.json'))) {
     throw new Error(
       'the ejected tree has no root package.json; check one in under the config root dir, it becomes the public root manifest',
     );
+  }
   const rootManifest = readManifest(readFileSync(join(staging, 'package.json'), 'utf8'));
   const wanted = rootManifest.packageManager;
-  if (typeof wanted === 'string' && wanted !== `pnpm@${pnpmVersion()}`)
+  if (typeof wanted === 'string' && wanted !== `pnpm@${pnpmVersion()}`) {
     throw new Error(`the tree pins ${wanted} but pnpm on PATH is ${pnpmVersion()}`);
+  }
 
   const publicDirs = packages.map(p => {
     const pub = paths.toPublic(p.manifest);
@@ -73,14 +77,14 @@ const generate = async (
     return posix.dirname(pub);
   });
   const manifests = [rootManifest, ...packages.map(p => readManifest(repo.read(p.manifest)))];
-  const before = parseLockfile(parse(readPrivate(repo, 'pnpm-lock.yaml')));
+  const before = parseWorkspaceLockfile(readPrivate(repo, 'pnpm-lock.yaml'));
   const importerOf = (pub: string): string | undefined => {
     const priv = paths.toPrivate(pub === '.' ? 'package.json' : `${pub}/package.json`);
     if (priv === undefined) return undefined;
     const dir = posix.dirname(priv);
     return dir === '.' ? '.' : dir;
   };
-  const assertPruned = (after: ReturnType<typeof parseLockfile>) =>
+  const assertPruned = (after: ReturnType<typeof parseWorkspaceLockfile>) =>
     assertOnlyPruned(before, after, importerOf);
 
   // Pass 1 carries every override so the copied lockfile still matches its own `overrides:`
@@ -92,14 +96,15 @@ const generate = async (
   });
   emit({ path: 'pnpm-lock.yaml', content: readPrivate(repo, 'pnpm-lock.yaml') });
   prune(staging);
-  const pass1 = parseLockfile(parse(readFileSync(join(staging, 'pnpm-lock.yaml'), 'utf8')));
+  const pass1 = parseWorkspaceLockfile(readFileSync(join(staging, 'pnpm-lock.yaml'), 'utf8'));
   assertPruned(pass1);
 
   const patches = reachablePatches(pass1, source.patchedDependencies ?? {});
-  if (patches.length > 0)
+  if (patches.length > 0) {
     throw new Error(
       `patched dependencies reach the ejected tree (${patches.join(', ')}); patches are not supported yet`,
     );
+  }
 
   // A selector can name an ejected workspace package too; those never appear in `packages:`.
   const workspaceNames = new Set(packages.map(p => p.name));
@@ -123,7 +128,7 @@ const generate = async (
     Object.keys(kept.allowBuilds).length;
   if (dropped > 0) {
     prune(staging);
-    assertPruned(parseLockfile(parse(readFileSync(join(staging, 'pnpm-lock.yaml'), 'utf8'))));
+    assertPruned(parseWorkspaceLockfile(readFileSync(join(staging, 'pnpm-lock.yaml'), 'utf8')));
   }
   emit({ path: 'pnpm-lock.yaml', content: readFileSync(join(staging, 'pnpm-lock.yaml'), 'utf8') });
 };

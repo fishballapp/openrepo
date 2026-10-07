@@ -17,8 +17,9 @@ export const mapPaths = (
   const add = (pub: string, priv: string) => {
     if (!isContained(pub)) throw new Error(`${priv} would land at ${pub}, outside the tree`);
     const existing = entries.get(pub);
-    if (existing !== undefined && existing !== priv)
+    if (existing !== undefined && existing !== priv) {
       throw new Error(`${pub} would come from both ${existing} and ${priv}`);
+    }
     entries.set(pub, priv);
   };
   // A `files` key names a file or a directory; a directory moves with everything under it, and

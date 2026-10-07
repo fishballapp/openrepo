@@ -55,10 +55,12 @@ const prepareCheckout = (dir: string, remote: string, branch: string): void => {
     git(dirname(dir), ['clone', '-q', remote, dir]);
   } else {
     const origin = tryGit(dir, ['remote', 'get-url', 'origin'])?.trim();
-    if (origin !== remote)
+    if (origin !== remote) {
       throw new Error(`${dir} is not a clone of ${remote} (origin: ${origin ?? 'none'})`);
-    if (git(dir, ['status', '--porcelain']).trim() !== '')
+    }
+    if (git(dir, ['status', '--porcelain']).trim() !== '') {
       throw new Error(`${dir} has uncommitted changes; commit or discard them first`);
+    }
   }
   git(dir, ['fetch', '-q', 'origin']);
   const { defaultBranch, branches } = remoteHeads(dir);
@@ -101,6 +103,20 @@ export const gitCommit = ({
         ? null
         : { sha: headSha, message: git(dir, ['log', '-1', '--format=%B']).trim() };
 
+    const text = typeof message === 'string' ? message : message({ ...ctx, previous });
+    const [author, ...coAuthors] = authors;
+    const trailers = coAuthors.map(({ name, email }) => `Co-authored-by: ${name} <${email}>`);
+    const body = trailers.length === 0 ? text : `${text}\n\n${trailers.join('\n')}`;
+    // The message and author go public with the tree, but the tree scan never saw them. Checked
+    // before the checkout changes, so a fixed message can simply be retried.
+    const leaks = await ctx.scan([
+      { path: 'commit message', content: `${body}\n${author.name} <${author.email}>` },
+    ]);
+    if (leaks.length > 0) {
+      const found = leaks.map(({ rule, excerpt }) => `${rule} ${excerpt}`).join(', ');
+      throw new Error(`the commit message would leak: ${found}`);
+    }
+
     git(dir, ['rm', '-rfq', '--ignore-unmatch', '.']);
     for (const file of ctx.files) {
       mkdirSync(dirname(join(dir, file)), { recursive: true });
@@ -125,10 +141,6 @@ export const gitCommit = ({
       if (unpushed !== '0') console.log(`${unpushed} unpushed commit(s); ${pushHint}`);
       return;
     }
-    const text = typeof message === 'string' ? message : message({ ...ctx, previous });
-    const [author, ...coAuthors] = authors;
-    const trailers = coAuthors.map(({ name, email }) => `Co-authored-by: ${name} <${email}>`);
-    const body = trailers.length === 0 ? text : `${text}\n\n${trailers.join('\n')}`;
     git(dir, [
       '-c',
       `user.name=${author.name}`,

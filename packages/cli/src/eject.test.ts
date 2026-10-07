@@ -19,7 +19,7 @@ import type { Plugin } from './plugin.ts';
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-const write = (root: string, files: Record<string, string>) => {
+const write = (root: string, files: Record<string, string | Uint8Array>) => {
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(join(root, path, '..'), { recursive: true });
     writeFileSync(join(root, path), content);
@@ -45,6 +45,21 @@ const depsPlugin: Plugin = {
       }),
 };
 
+// A minimal scanner: every line saying LEAK leaks.
+const leakScan: Plugin = {
+  name: 'words',
+  scan: async ({ files }) =>
+    files.flatMap(({ path, content }) =>
+      content
+        .split('\n')
+        .flatMap((text, index) =>
+          text.includes('LEAK')
+            ? [{ path, line: index + 1, rule: 'leak', excerpt: 'LEAK', isSecret: false }]
+            : [],
+        ),
+    ),
+};
+
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'openrepo-eject-test-'));
@@ -64,7 +79,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-const commit = (files: Record<string, string>) => {
+const commit = (files: Record<string, string | Uint8Array>) => {
   write(root, files);
   git(root, 'add', '-A');
   git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'files');
@@ -204,5 +219,184 @@ describe('eject', () => {
         generate: async ({ staging }) => writeFileSync(join(staging, 'sneaky.txt'), 'x'),
       }),
     ).rejects.toThrow(/no one declared/);
+  });
+
+  it('throws on a leak, does not create outDir, and does not run postExport', async () => {
+    commit({ 'projects/x/a.txt': 'LEAK' });
+    const outDir = join(root, 'out');
+    let postExportRan = false;
+
+    await expect(
+      eject({
+        configDir: root,
+        dryRun: false,
+        config: defineExport({
+          root: 'projects/x',
+          outDir,
+          include: ['projects/x'],
+          plugins: [
+            leakScan,
+            {
+              name: 'tracker',
+              postExport: async () => {
+                postExportRan = true;
+              },
+            },
+          ],
+        }),
+      }),
+    ).rejects.toThrow(/the tree would leak:\n {2}a\.txt:1 {2}words\/leak {2}LEAK/);
+
+    expect(existsSync(outDir)).toBe(false);
+    expect(postExportRan).toBe(false);
+  });
+
+  it('hands scanners a binary file as latin1 and UTF-16 by its byte order mark', async () => {
+    commit({
+      'projects/x/data.bin': Buffer.from([0, 1, ...Buffer.from(' LEAK '), 255]),
+      'projects/x/utf16.txt': Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from('LEAK', 'utf16le'),
+      ]),
+    });
+
+    await expect(
+      eject({
+        configDir: root,
+        dryRun: true,
+        config: defineExport({
+          root: 'projects/x',
+          outDir: join(root, 'out'),
+          include: ['projects/x'],
+          plugins: [leakScan],
+        }),
+      }),
+    ).rejects.toThrow(/data\.bin:1 {2}words\/leak {2}LEAK\n {2}utf16\.txt:1 {2}words\/leak/);
+  });
+
+  it('cuts a secret finding to 4 characters', async () => {
+    commit({ 'projects/x/a.txt': 'a' });
+
+    await expect(
+      eject({
+        configDir: root,
+        dryRun: true,
+        config: defineExport({
+          root: 'projects/x',
+          outDir: join(root, 'out'),
+          include: ['projects/x'],
+          plugins: [
+            {
+              name: 'tokens',
+              scan: async () => [{ path: 'a.txt', line: 1, rule: 'github', excerpt: 'ghp_secret' }],
+            },
+          ],
+        }),
+      }),
+    ).rejects.toThrow(/a\.txt:1 {2}tokens\/github {2}ghp_…\n/);
+  });
+
+  it('succeeds when a leak matches allowLeaks', async () => {
+    commit({ 'projects/x/a.txt': 'LEAK' });
+    const outDir = join(root, 'out');
+    let postExportRan = false;
+
+    await eject({
+      configDir: root,
+      dryRun: false,
+      config: defineExport({
+        root: 'projects/x',
+        outDir,
+        include: ['projects/x'],
+        allowLeaks: [{ path: 'a.txt', rule: 'words/leak' }],
+        plugins: [
+          leakScan,
+          {
+            name: 'tracker',
+            postExport: async () => {
+              postExportRan = true;
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(existsSync(outDir)).toBe(true);
+    expect(postExportRan).toBe(true);
+  });
+
+  it('throws when allowLeaks has a stale entry', async () => {
+    commit({ 'projects/x/clean.txt': 'clean' });
+    const outDir = join(root, 'out');
+
+    await expect(
+      eject({
+        configDir: root,
+        dryRun: true,
+        config: defineExport({
+          root: 'projects/x',
+          outDir,
+          include: ['projects/x'],
+          allowLeaks: [{ path: 'clean.txt', rule: 'words/leak' }],
+          plugins: [leakScan],
+        }),
+      }),
+    ).rejects.toThrow(
+      /allowLeaks entries that match nothing, remove them: { path: 'clean.txt', rule: 'words\/leak' }/,
+    );
+
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('scans what plugins transformed and generated', async () => {
+    commit({ 'projects/x/clean.txt': 'clean' });
+
+    await expect(
+      eject({
+        configDir: root,
+        dryRun: true,
+        config: defineExport({
+          root: 'projects/x',
+          outDir: join(root, 'out'),
+          include: ['projects/x'],
+          plugins: [
+            leakScan,
+            { name: 'dirty-transform', transform: () => 'LEAK' },
+            {
+              name: 'dirty-generate',
+              generate: async ({ emit }) => emit({ path: 'generated.txt', content: 'LEAK' }),
+            },
+          ],
+        }),
+      }),
+    ).rejects.toThrow(/clean\.txt:1 {2}words\/leak {2}LEAK\n {2}generated\.txt:1/);
+  });
+
+  it('hands postExport a scan for text outside the tree', async () => {
+    commit({ 'projects/x/clean.txt': 'clean' });
+    let findings: unknown;
+
+    await eject({
+      configDir: root,
+      dryRun: false,
+      config: defineExport({
+        root: 'projects/x',
+        outDir: join(root, 'out'),
+        include: ['projects/x'],
+        plugins: [
+          leakScan,
+          {
+            name: 'committer',
+            postExport: async ({ scan }) => {
+              findings = await scan([{ path: 'commit message', content: 'fix\nLEAK' }]);
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(findings).toEqual([
+      { path: 'commit message', line: 2, rule: 'words/leak', excerpt: 'LEAK', isSecret: false },
+    ]);
   });
 });

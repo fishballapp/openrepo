@@ -15,8 +15,9 @@ export const missingDependencies = (
   for (let pkg = queue.pop(); pkg !== undefined; pkg = queue.pop()) {
     for (const dir of pkg.dependsOn) {
       const dep = byDir.get(dir);
-      if (dep === undefined)
+      if (dep === undefined) {
         throw new Error(`${pkg.name} depends on ${dir}, which no plugin knows`);
+      }
       if (selected.has(dep.manifest) || seen.has(dir)) continue;
       seen.add(dir);
       queue.push(dep);
@@ -31,10 +32,11 @@ export const assertClosed = (selected: ReadonlySet<string>, packages: readonly P
   for (const pkg of packages.filter(p => selected.has(p.manifest))) {
     for (const dir of pkg.dependsOn) {
       const dep = byDir.get(dir);
-      if (dep !== undefined && !selected.has(dep.manifest))
+      if (dep !== undefined && !selected.has(dep.manifest)) {
         throw new Error(
           `${pkg.name} depends on ${dep.name} (${dir}) but its manifest is excluded; drop the exclude or the dependant`,
         );
+      }
     }
   }
 };

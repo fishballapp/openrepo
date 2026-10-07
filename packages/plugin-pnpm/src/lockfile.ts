@@ -1,3 +1,4 @@
+import { parseAllDocuments } from 'yaml';
 import { z } from 'zod';
 
 const Resolved = z.looseObject({ version: z.string() });
@@ -11,18 +12,39 @@ const LockfileSchema = z.looseObject({
 export type Lockfile = z.infer<typeof LockfileSchema>;
 export const parseLockfile = (data: unknown): Lockfile => {
   const lock = LockfileSchema.parse(data);
-  if (lock.lockfileVersion !== undefined && !lock.lockfileVersion.startsWith('9.'))
+  if (lock.lockfileVersion !== undefined && !lock.lockfileVersion.startsWith('9.')) {
     throw new Error(
       `pnpm-lock.yaml is lockfileVersion ${lock.lockfileVersion}; only 9.x (pnpm 9+) is supported`,
     );
+  }
   return lock;
 };
 
+export const parseWorkspaceLockfile = (source: string): Lockfile => {
+  const documents = parseAllDocuments(source);
+  const errors = documents.flatMap(document => document.errors);
+  if (errors.length > 0) throw errors[0];
+
+  const values = documents.map(document => document.toJS() as unknown);
+  if (values.length === 1) return parseLockfile(values[0]);
+
+  const workspaceDocuments = values.filter(
+    value => typeof value === 'object' && value !== null && 'settings' in value,
+  );
+  if (workspaceDocuments.length !== 1) {
+    throw new Error(
+      `pnpm-lock.yaml contains ${values.length} documents but no unique workspace lockfile document`,
+    );
+  }
+  return parseLockfile(workspaceDocuments[0]);
+};
+
 // `optional` / `dev` say how the graph reaches an entry, and a smaller graph reaches it differently.
-// Resolution is everything else.
+// `deprecated` is the registry's word on the version, which it can add at any time and pnpm records
+// on the next resolve. Resolution is everything else.
 const resolution = (entry: unknown) => {
   if (typeof entry !== 'object' || entry === null) return entry;
-  const { optional: _o, dev: _d, ...rest } = entry as Record<string, unknown>;
+  const { optional: _o, dev: _d, deprecated: _dp, ...rest } = entry as Record<string, unknown>;
   return rest;
 };
 
@@ -58,8 +80,9 @@ export const assertOnlyPruned = (
     const peers = peersOf(base);
     const { optional: _o, dev: _d, ...rest } = entry as Record<string, unknown>;
     const stripped = Object.entries(rest).flatMap(([field, value]) => {
-      if (typeof value !== 'object' || value === null || Array.isArray(value))
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return [[field, value] as const];
+      }
       const deps = Object.entries(value as Record<string, unknown>)
         .filter(([dep]) => !peers.has(dep))
         .map(([dep, v]) => [dep, typeof v === 'string' ? withoutPeers(v) : v] as const);
@@ -88,29 +111,32 @@ export const assertOnlyPruned = (
         const was = priorDeps.data[name]?.version;
         // A workspace link is a relative path, and the layout moved: only registry versions compare.
         if (version.startsWith('link:') && was?.startsWith('link:')) continue;
-        if (was === undefined || withoutPeers(was) !== withoutPeers(version))
+        if (was === undefined || withoutPeers(was) !== withoutPeers(version)) {
           throw new Error(
             `lockfile prune re-resolved ${name} in ${pub}: ${was ?? 'absent'} → ${version}`,
           );
+        }
       }
     }
   }
   for (const [key, entry] of Object.entries(after.packages)) {
     const prior = before.packages[key];
     if (prior === undefined) throw new Error(`lockfile prune resolved a new entry: ${key}`);
-    if (JSON.stringify(resolution(prior)) !== JSON.stringify(resolution(entry)))
+    if (JSON.stringify(resolution(prior)) !== JSON.stringify(resolution(entry))) {
       throw new Error(
         `lockfile prune changed an entry: ${key}\n  before ${JSON.stringify(prior)}\n  after  ${JSON.stringify(entry)}`,
       );
+    }
   }
   for (const [key, entry] of Object.entries(after.snapshots)) {
     const base = withoutPeers(key);
     const prior = priorEdges.get(base);
     if (prior === undefined) throw new Error(`lockfile prune resolved a new entry: ${key}`);
-    if (!prior.has(edges(base, entry)))
+    if (!prior.has(edges(base, entry))) {
       throw new Error(
         `lockfile prune changed an entry: ${key}\n  after ${JSON.stringify(entry)}\n  matches no private snapshot of that version`,
       );
+    }
   }
 };
 

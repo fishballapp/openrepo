@@ -31,7 +31,7 @@ export const listTree = (root: string, pathspecs: readonly string[]): string[] =
     .split('\0')
     .filter(path => path !== '');
 
-/** Every path at HEAD with its mode; the only source of modes since ls-files --with-tree has none. */
+/** Every path at HEAD with its mode; the only source of modes, as `--with-tree` lists none. */
 export const treeModes = (root: string): Map<string, string> =>
   new Map(
     git(root, ['ls-tree', '-r', '-z', 'HEAD'])
@@ -39,8 +39,9 @@ export const treeModes = (root: string): Map<string, string> =>
       .filter(line => line !== '')
       .map(line => {
         const match = /^(\d{6}) \w+ [0-9a-f]+\t(.+)$/.exec(line);
-        if (match?.[1] === undefined || match[2] === undefined)
+        if (match?.[1] === undefined || match[2] === undefined) {
           throw new Error(`unexpected ls-tree line: ${line}`);
+        }
         return [match[2], match[1]];
       }),
   );

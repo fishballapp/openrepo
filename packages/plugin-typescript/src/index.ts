@@ -25,8 +25,9 @@ const resolveTarget = (
     { file: `${base}/tsconfig.json`, isDir: true },
   ];
   const hit = candidates.find(c => paths.toPublic(c.file) !== undefined);
-  if (hit === undefined)
+  if (hit === undefined) {
     throw new Error(`${posix.join(fromDir, value)} is referenced but not ejected`);
+  }
   return hit;
 };
 
@@ -47,14 +48,17 @@ const transform = (file: TransformFile, paths: PathResolver): string => {
   const edits: { path: (string | number)[]; value: string }[] = [];
   const consider = (node: Node | undefined, path: (string | number)[]) => {
     const value: unknown = node === undefined ? undefined : getNodeValue(node);
-    if (typeof value === 'string' && isRelative(value))
+    if (typeof value === 'string' && isRelative(value)) {
       edits.push({ path, value: rePoint(file, value, paths) });
+    }
   };
   const extendsNode = findNodeAtLocation(tree, ['extends']);
   if (extendsNode?.type === 'array') {
     for (const i of (extendsNode.children ?? []).keys())
       consider(findNodeAtLocation(tree, ['extends', i]), ['extends', i]);
-  } else consider(extendsNode, ['extends']);
+  } else {
+    consider(extendsNode, ['extends']);
+  }
   for (const i of (findNodeAtLocation(tree, ['references'])?.children ?? []).keys())
     consider(findNodeAtLocation(tree, ['references', i, 'path']), ['references', i, 'path']);
   return edits.reduce(

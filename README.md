@@ -8,7 +8,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@openrepo/cli?color=2563eb&label=%40openrepo%2Fcli)](https://www.npmjs.com/package/@openrepo/cli)
 [![npm downloads](https://img.shields.io/npm/dm/@openrepo/cli?color=2563eb)](https://www.npmjs.com/package/@openrepo/cli)
-[![CI](https://github.com/fishballapp/openrepo/actions/workflows/ci.yml/badge.svg)](https://github.com/fishballapp/openrepo/actions/workflows/ci.yml)
+[![CI](https://github.com/fishballapp/openrepo/actions/workflows/cd.yml/badge.svg)](https://github.com/fishballapp/openrepo/actions/workflows/cd.yml)
 [![MIT licence](https://img.shields.io/npm/l/@openrepo/cli?color=2563eb)](./LICENSE)
 
 </div>
@@ -28,6 +28,9 @@ every commit on `main` is one release.
 
 - **Only committed files.** OpenRepo reads from your latest commit, not from your working
   directory, so unstaged edits and ignored files can't end up in the public repo.
+- **No leaked paths or secrets.** Before anything is written, OpenRepo scans the whole tree and
+  stops if it finds a home directory path, a private key, an API token or a `.env` file, unless
+  your config allows that one finding.
 - **A complete workspace.** If a selected package depends on another workspace package, that
   package is copied in too.
 - **The same versions.** The public lockfile is your lockfile with the unused entries removed.
@@ -39,12 +42,12 @@ every commit on `main` is one release.
   push. Running an eject never changes anything remote.
 - **Clear errors.** If your setup has something OpenRepo can't handle yet, it stops and tells you
   what, instead of producing a broken repo.
-- **Plugins.** pnpm, TypeScript and git support are plugins. You can write your own.
+- **Plugins.** pnpm, TypeScript, git and secret scanning are plugins. You can write your own.
 
 ## Installation
 
 ```bash
-pnpm add -Dw @openrepo/cli @openrepo/plugin-pnpm @openrepo/plugin-typescript @openrepo/plugin-git
+pnpm add -Dw @openrepo/cli @openrepo/plugin-pnpm @openrepo/plugin-typescript @openrepo/plugin-local-leaks @openrepo/plugin-secretlint @openrepo/plugin-git
 ```
 
 Needs Node 24 or newer, git, and pnpm. Install at the workspace root (`-w`): the config file imports
@@ -75,7 +78,9 @@ projects/thing/
 // projects/thing/openrepo.config.ts
 import { defineExport } from '@openrepo/cli';
 import { gitCommit } from '@openrepo/plugin-git';
+import { localLeaks } from '@openrepo/plugin-local-leaks';
 import { pnpm } from '@openrepo/plugin-pnpm';
+import { secretlint } from '@openrepo/plugin-secretlint';
 import { typescript } from '@openrepo/plugin-typescript';
 
 export default defineExport({
@@ -85,6 +90,8 @@ export default defineExport({
   plugins: [
     pnpm(),
     typescript(),
+    localLeaks(),
+    secretlint(),
     gitCommit({
       remote: 'git@github.com:you/thing.git',
       branch: 'main',
@@ -117,6 +124,12 @@ and prints the path. Look at the commit, change it if you want, and push it your
 **5. Next release.** Bump the version, commit in the monorepo, eject again. The new commit lands
 on top of the previous one in the same clone.
 
+If the gap between releases runs to days, expect both temp directories to be gone. macOS deletes
+files under `/var/folders` after a few days of disuse but leaves the directory tree standing, so
+`outDir` refuses ("exists and was not written by openrepo", its `.openrepo` marker having been
+eaten) and the clone is a `.git` with no files in it. Delete both and eject again; the clone is
+rebuilt from the remote and nothing is lost.
+
 ## How it works
 
 1. Lists the files matched by `include` and `exclude` at your latest commit.
@@ -127,7 +140,9 @@ on top of the previous one in the same clone.
    where a `tsconfig.json` that pointed at `../../../../tsconfig.base.json` gets pointed at
    `../../tsconfig.base.json`.
 5. Runs each plugin's `generate` to add root files: the trimmed `pnpm-workspace.yaml` and lockfile.
-6. Moves the result to `outDir` and runs each plugin's `postExport`.
+6. Runs each plugin's `scan` over the finished tree. If any finding is not in `allowLeaks`, it
+   stops.
+7. Moves the result to `outDir` and runs each plugin's `postExport`.
 
 ## Configuration
 
@@ -136,12 +151,43 @@ on top of the previous one in the same clone.
 | `root` | Directory that becomes the public root. Files under it lose the prefix; other files keep their path. |
 | `include` / `exclude` | git pathspecs: directories, files, `*` and `**` work like in `.gitignore`. `exclude` always wins, even over packages pulled in as dependencies. |
 | `files` | `{ [privatePath]: publicPath }` for a file or a directory that has to land somewhere other than its default: a CI workflow the monorepo also runs, or a shared package pulled in from outside `root` that should sit under `internal/` rather than keep its monorepo path. A directory moves with everything under it. |
+| `allowLeaks` | `{ path, rule }` entries for findings of the [leak scan](#leak-scan) that are meant to be public, like test fixtures. `path` is a glob over the public path; `rule` is a scan plugin's `<plugin>/<rule>`, like `local-leaks/path` or `secretlint/github`. Stale entries that match nothing fail the eject. Default `[]`. |
 | `outDir` | Where the result goes. Default is a directory under the OS temp dir, printed on every run. The directory must not exist yet, or must be one a previous eject wrote (it leaves a `.openrepo` marker). Anything else is refused. |
 | `emptyOutDir` | `true` to wipe an existing `outDir` that OpenRepo didn't write. Same idea as Vite's option of the same name. Default `false`. |
 | `plugins` | The plugins, in the order their hooks should run. |
 
 The CLI has one command: `openrepo eject <config> [--dry-run]`. `--dry-run` does everything except
 run `postExport` hooks.
+
+## Leak scan
+
+Before anything is copied to `outDir` or committed, OpenRepo hands every file of the finished tree,
+including what plugins changed or generated, to each plugin's `scan`. It runs on `--dry-run` too.
+If a finding is not allowed, the eject stops and `outDir` is not touched. The scanning itself lives
+in plugins; use both of these:
+
+- [`@openrepo/plugin-local-leaks`](#openrepoplugin-local-leaks): paths from your machine and `.env`
+  files.
+- [`@openrepo/plugin-secretlint`](#openrepoplugin-secretlint): tokens, API keys and private keys.
+
+With no scan plugin, nothing is scanned. A finding is named `<plugin>/<rule>`, like
+`secretlint/github`. A secret is shown by its first four characters only, so the error itself never
+leaks it.
+
+Binary files are scanned for the text inside them, which catches a home path or token in an image's
+metadata. UTF-16 files are recognised by their byte order mark and scanned as text.
+
+To allow a finding that is meant to be public, like a test fixture:
+
+```ts
+allowLeaks: [
+  { path: 'packages/thing/test/fixtures/**', rule: 'secretlint/github' },
+],
+```
+
+`path` is a glob over the public path. `*` and `**` skip dotfiles, so name a `.env` file outright.
+Every entry must match at least one finding; one that matches nothing fails the eject, so the list
+cannot quietly outlive the findings it was written for.
 
 ## Plugins
 
@@ -152,7 +198,8 @@ run `postExport` hooks.
 Finds packages through `pnpm-workspace.yaml` and generates the public `pnpm-workspace.yaml` and
 `pnpm-lock.yaml`. The workspace file keeps only the catalog entries the exported packages use. The
 lockfile is your lockfile pruned by `pnpm install --lockfile-only`, then compared entry by entry
-with the original; any changed version is an error.
+with the original; any changed version is an error. pnpm 12's package-manager lock document is
+preserved, while OpenRepo compares and prunes the workspace lock document.
 
 Each setting in `pnpm-workspace.yaml` is either copied (install policy such as `minimumReleaseAge`),
 regenerated (`packages`, catalogs, `overrides`), or rejected because it can't work in the public
@@ -168,6 +215,32 @@ Updates relative `extends` and `references[].path` entries in `tsconfig*.json` f
 point at the right file after the move. Comments are kept. Pointing at a file that isn't exported
 is an error.
 
+### `@openrepo/plugin-local-leaks`
+
+`localLeaks()`
+
+Stops an eject that would publish something from your machine:
+
+- `local-leaks/path`: your home directory, the private repo root, and any home directory path
+  (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>`), also as JSON escapes it.
+- `local-leaks/env-file`: `.env` and `.env.*` files. `.env.example`, `.env.sample`, `.env.template`
+  and `.env.schema` are fine.
+
+These are not secrets, so the error shows them in full.
+
+### `@openrepo/plugin-secretlint`
+
+`secretlint({ rules? })`
+
+Scans the tree for secrets with [secretlint](https://github.com/secretlint/secretlint)'s
+recommended rules, in-process, with no network calls. On top of them it finds Google API keys,
+which the preset misses, and AWS access key ids, which the preset leaves off. `rules` adds more
+secretlint rules.
+
+Nothing in the tree can silence it: `.secretlintrc`, `.secretlintignore` and `secretlint-disable`
+comments are not read. A finding meant to be public goes in `allowLeaks`, named `secretlint/<rule>`
+(`secretlint/github`, `secretlint/privatekey`, `secretlint/google-api-key`).
+
 ### `@openrepo/plugin-git`
 
 `gitCommit({ remote, branch, dir?, message, authors })`
@@ -176,7 +249,8 @@ Clones `remote` into `dir` (default: a directory under the OS temp dir, printed 
 reuses it if it's already a clean clone of that remote. Checks out `branch`, creating it from the
 remote's default branch if it doesn't exist yet. Replaces the branch's files with the exported
 ones and commits. The first entry in `authors` is the commit author; the rest become
-`Co-authored-by` lines. It never pushes; it prints the push command.
+`Co-authored-by` lines. The message and authors go through every scan plugin, and a finding stops
+the commit before the checkout changes; `allowLeaks` does not apply to them. It never pushes; it prints the push command.
 
 `message` can be a string or a function. The function receives the export context plus
 `previous`, the commit currently at the tip of the branch, which lets you write a changelog. This
@@ -196,7 +270,7 @@ message: ({ outDir, source, previous }) => {
 
 ## Writing a plugin
 
-A plugin is an object with a name and any of four functions.
+A plugin is an object with a name and any of five functions.
 
 ```ts
 import type { Plugin } from '@openrepo/cli';
@@ -213,7 +287,8 @@ export const licenseHeaders = (header: string): Plugin => ({
 | `packages(repo)` | before files are selected | return the workspace packages and what they depend on, so dependencies get pulled in |
 | `transform(file, paths)` | once per text file | return the file's new content. `paths.toPublic(p)` and `paths.toPrivate(p)` convert between the two layouts; `paths.publicPaths` lists every exported file |
 | `generate(ctx)` | after all files are in the staging directory | add generated files with `ctx.emit({ path, content })`. You may run a tool in `ctx.staging` first |
-| `postExport(ctx)` | after the result is in `outDir`; skipped on `--dry-run` | anything that acts on the finished result, like committing |
+| `scan(ctx)` | after `generate`, before anything reaches `outDir`; runs on `--dry-run` too | `ctx.files` is every file as `{ path, content }`, decoded to text (UTF-8, UTF-16 by its BOM, binary as latin1), and `ctx.source.root` is the private repo; return what leaks, as `{ path, line, rule, excerpt, isSecret? }[]`. OpenRepo names each `<plugin>/<rule>`, shows a finding's first 4 characters unless `isSecret: false`, applies `allowLeaks` and decides whether to stop |
+| `postExport(ctx)` | after the result is in `outDir`; skipped on `--dry-run` | anything that acts on the finished result, like committing. `ctx.scan(files)` runs every `scan` on text that goes public outside the tree, like a commit message |
 
 `repo.read(path)` returns a file's content at the latest commit. A plugin can't overwrite a file
 that was selected from the repo, and can't overwrite a file another plugin generated.

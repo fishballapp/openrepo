@@ -7,10 +7,11 @@ import { typescript } from '@openrepo/plugin-typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { pnpm } from './index.ts';
+import { parseWorkspaceLockfile } from './lockfile.ts';
 
 // A whole eject of a fixture monorepo through the real pnpm + typescript plugins, ending in a
-// frozen offline install of the result. The fixture has no external dependencies, so pnpm never
-// needs the network for either lockfile.
+// frozen offline install of the result. The fixture has no external dependencies; the initial
+// install may still fetch pnpm's own package-manager metadata before writing pnpm 12's lock doc.
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
     cwd,
@@ -81,7 +82,7 @@ describe('pnpm + typescript end to end', () => {
         include: ['*.ts'],
       }),
     });
-    pnpmExec(root, 'install', '--lockfile-only', '--offline');
+    pnpmExec(root, 'install', '--lockfile-only');
     git(root, 'init', '-q', '--initial-branch=main');
     git(root, 'add', '-A');
     git(root, 'commit', '-q', '-m', 'fixture');
@@ -102,7 +103,7 @@ describe('pnpm + typescript end to end', () => {
       packages: ['packages/a', 'packages/shared'],
       strictPeerDependencies: false,
     });
-    const lock = parse(readFileSync(join(out, 'pnpm-lock.yaml'), 'utf8'));
+    const lock = parseWorkspaceLockfile(readFileSync(join(out, 'pnpm-lock.yaml'), 'utf8'));
     expect(Object.keys(lock.importers).toSorted()).toEqual(['.', 'packages/a', 'packages/shared']);
     expect(JSON.parse(readFileSync(join(out, 'packages/a/tsconfig.json'), 'utf8')).extends).toBe(
       '../../tsconfig.base.json',

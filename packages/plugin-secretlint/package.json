@@ -1,14 +1,14 @@
 {
-  "name": "@openrepo/plugin-typescript",
+  "name": "@openrepo/plugin-secretlint",
   "version": "0.2.0",
   "type": "module",
-  "description": "openrepo plugin: re-points tsconfig `extends` and project references across the ejected layout.",
+  "description": "openrepo plugin: secretlint scanner for ejected trees.",
   "license": "MIT",
   "homepage": "https://github.com/fishballapp/openrepo",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fishballapp/openrepo.git",
-    "directory": "packages/plugin-typescript"
+    "directory": "packages/plugin-secretlint"
   },
   "files": [
     "dist",
@@ -40,14 +40,16 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "jsonc-parser": "catalog:"
+    "@secretlint/core": "catalog:",
+    "@secretlint/secretlint-rule-preset-recommend": "catalog:",
+    "@secretlint/types": "catalog:"
   },
   "peerDependencies": {
     "@openrepo/cli": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
     "@openrepo/cli": "workspace:*",
+    "@types/node": "catalog:",
     "tsdown": "catalog:"
   }
 }

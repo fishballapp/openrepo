@@ -7,10 +7,11 @@ import { z } from 'zod';
 import { ejectFile } from './eject.ts';
 
 const formatError = (err: unknown): string => {
-  if (err instanceof z.ZodError)
+  if (err instanceof z.ZodError) {
     return err.issues
       .map(i => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message))
       .join('; ');
+  }
   return err instanceof Error ? err.message : String(err);
 };
 

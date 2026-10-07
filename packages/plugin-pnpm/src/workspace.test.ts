@@ -98,6 +98,16 @@ describe('publicWorkspaceYaml', () => {
     });
   });
 
+  it('keeps the catalog entry of a dependency that is also a plain-range peer', () => {
+    const out = publicWorkspaceYaml(
+      source,
+      ['packages/a'],
+      [{ peerDependencies: { zod: '^4' }, devDependencies: { zod: 'catalog:' } }],
+      { overrides: {}, allowBuilds: {} },
+    );
+    expect(out).toMatchObject({ catalog: { zod: '^4' } });
+  });
+
   it('refuses an unclassified setting, an unsupported one, and honours keep/drop', () => {
     const empty = { overrides: {}, allowBuilds: {} };
     expect(() => publicWorkspaceYaml({ ...source, mystery: 1 }, [], [], empty)).toThrow(
@@ -159,6 +169,18 @@ describe('assertOnlyPruned', () => {
     expect(() =>
       assertOnlyPruned(before, parseLockfile({ packages: { 'a@1': { x: 2 } }, snapshots: {} })),
     ).toThrow(/changed/);
+  });
+  // The registry can deprecate a version at any time, and pnpm records it on the next resolve.
+  it('accepts an entry the registry has deprecated since', () => {
+    expect(() =>
+      assertOnlyPruned(
+        before,
+        parseLockfile({
+          packages: { 'a@1': { x: 1, deprecated: 'use 2' } },
+          snapshots: { 'a@1': {} },
+        }),
+      ),
+    ).not.toThrow();
   });
   it('accepts a snapshot re-keyed by its peers when every version is unchanged', () => {
     const peers = parseLockfile({

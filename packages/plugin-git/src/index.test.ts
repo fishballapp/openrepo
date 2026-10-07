@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ScannedFile } from '@openrepo/cli';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { gitCommit } from './index.ts';
 
@@ -23,6 +24,11 @@ const ctx = (files: Record<string, string>) => {
     files: Object.keys(files).toSorted(),
     source: { root, sha: 'abc' },
     packages: [],
+    // Stands in for the scan plugins: anything saying `/Users/alice` leaks.
+    scan: async (texts: readonly ScannedFile[]) =>
+      texts
+        .filter(({ content }) => content.includes('/Users/alice'))
+        .map(({ path }) => ({ path, line: 1, rule: 'fake/path', excerpt: '/Users/alice' })),
   };
 };
 const AUTHORS = [
@@ -96,6 +102,15 @@ describe('gitCommit', () => {
     git(root, 'init', '-q', 'repo');
     git(repo, 'remote', 'add', 'origin', 'git@example.com:other.git');
     await expect(commit('main')).rejects.toThrow(/not a clone/);
+  });
+
+  it('refuses a commit message a scan plugin flags, and a fixed one then commits', async () => {
+    await expect(commit('main', 'fix: read /Users/alice/private-repo')).rejects.toThrow(
+      /commit message would leak: fake\/path \/Users\/alice/,
+    );
+    expect(git(repo, 'rev-list', '--all', '--count')).toBe('0');
+    await commit('main', 'fix: read the private repo');
+    expect(git(repo, 'rev-list', '--all', '--count')).toBe('1');
   });
 
   it('defaults dir to a temp dir named after the remote', async () => {

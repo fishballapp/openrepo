@@ -23,12 +23,12 @@ export const ManifestSchema = z.looseObject({
 });
 export type Manifest = z.infer<typeof ManifestSchema>;
 
-export const allDependencies = (m: Manifest): Record<string, string> => ({
-  ...m.dependencies,
-  ...m.devDependencies,
-  ...m.peerDependencies,
-  ...m.optionalDependencies,
-});
+// Every field's entries, not one merged record: a package can name the same dependency twice (a
+// `^4` peer and the `catalog:` dev copy it builds against), and each spec counts.
+export const allDependencies = (m: Manifest): [name: string, spec: string][] =>
+  [m.dependencies, m.devDependencies, m.peerDependencies, m.optionalDependencies].flatMap(
+    dependencies => Object.entries(dependencies ?? {}),
+  );
 
 /**
  * How each `pnpm-workspace.yaml` key travels. Install policy copies verbatim; keys this plugin
@@ -100,10 +100,11 @@ const classify = (
   if (drop.includes(key)) return 'drop';
   if (PORTABLE.includes(key)) return 'keep';
   const why = UNSUPPORTED[key];
-  if (why !== undefined)
+  if (why !== undefined) {
     throw new Error(
       `pnpm-workspace.yaml: \`${key}\` is not supported (${why}). Pass pnpm({ settings: { drop: ['${key}'] } }) to leave it out, or keep: [...] if you know it works for your tree.`,
     );
+  }
   throw new Error(
     `pnpm-workspace.yaml: openrepo has not classified \`${key}\`. Pass pnpm({ settings: { keep: ['${key}'] } }) to copy it verbatim or drop: ['${key}'] to leave it out, and please open an issue so it gets a default.`,
   );
@@ -122,25 +123,30 @@ export const workspaceDirs = (globs: readonly string[], files: readonly string[]
 
 // pnpm's workspace protocol: `workspace:*` / `^` / `~` / a range name the dependency by its key;
 // `workspace:alias@range` and `workspace:../path` do not, and are refused rather than guessed.
-export const workspaceDependencyNames = (m: Manifest): string[] =>
-  Object.entries(allDependencies(m)).flatMap(([name, spec]) => {
-    if (!spec.startsWith('workspace:')) return [];
-    const rest = spec.slice('workspace:'.length);
-    // `*`, `^`, `~` or a range keep the dependency's own name; alias and path forms rename it.
-    if (rest === '' || rest.includes('@') || rest.includes('/') || rest.includes('\\'))
-      throw new Error(
-        `${m.name ?? '?'} depends on ${name} as "${spec}"; alias and path forms are not supported`,
-      );
-    return [name];
-  });
+export const workspaceDependencyNames = (m: Manifest): string[] => [
+  ...new Set(
+    allDependencies(m).flatMap(([name, spec]) => {
+      if (!spec.startsWith('workspace:')) return [];
+      const rest = spec.slice('workspace:'.length);
+      // `*`, `^`, `~` or a range keep the dependency's own name; alias and path forms rename it.
+      if (rest === '' || rest.includes('@') || rest.includes('/') || rest.includes('\\')) {
+        throw new Error(
+          `${m.name ?? '?'} depends on ${name} as "${spec}"; alias and path forms are not supported`,
+        );
+      }
+      return [name];
+    }),
+  ),
+];
 
 export const toPackages = (manifests: ReadonlyMap<string, Manifest>): Package[] => {
   const dirByName = new Map<string, string>();
   for (const [dir, m] of manifests) {
     if (m.name === undefined) continue;
     const existing = dirByName.get(m.name);
-    if (existing !== undefined)
+    if (existing !== undefined) {
       throw new Error(`two workspace packages are named ${m.name}: ${existing}, ${dir}`);
+    }
     dirByName.set(m.name, dir);
   }
   return [...manifests].map(([dir, m]) => ({
@@ -149,8 +155,9 @@ export const toPackages = (manifests: ReadonlyMap<string, Manifest>): Package[] 
     name: m.name ?? dir,
     dependsOn: workspaceDependencyNames(m).map(name => {
       const depDir = dirByName.get(name);
-      if (depDir === undefined)
+      if (depDir === undefined) {
         throw new Error(`${m.name ?? dir} depends on ${name}, which is not a workspace package`);
+      }
       return depDir;
     }),
   }));
@@ -168,12 +175,11 @@ export const overridePackages = (key: string): string[] => key.split('>').map(pa
 // pnpm resolves `catalog:` in an override by the overridden package: `a>b@1` → `b`.
 export const overrideTarget = (key: string): string => overridePackages(key).at(-1) ?? key;
 
-const catalogNameOf = (spec: string): string | null =>
-  spec === 'catalog:'
-    ? 'default'
-    : spec.startsWith('catalog:')
-      ? spec.slice('catalog:'.length)
-      : null;
+const catalogNameOf = (spec: string): string | null => {
+  if (spec === 'catalog:') return 'default';
+  if (spec.startsWith('catalog:')) return spec.slice('catalog:'.length);
+  return null;
+};
 
 const pick = (source: Record<string, string> | undefined, names: Iterable<string>, label: string) =>
   Object.fromEntries(
@@ -203,7 +209,7 @@ export const publicWorkspaceYaml = (
 ): Record<string, unknown> => {
   const kept = Object.keys(source).filter(key => classify(key, settings) === 'keep');
   const specs = [
-    ...manifests.flatMap(m => Object.entries(allDependencies(m))),
+    ...manifests.flatMap(allDependencies),
     ...Object.entries(overrides).map(([key, spec]) => [overrideTarget(key), spec] as const),
   ];
   const wanted = Map.groupBy(
