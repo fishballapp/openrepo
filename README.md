@@ -243,7 +243,7 @@ comments are not read. A finding meant to be public goes in `allowLeaks`, named 
 
 ### `@openrepo/plugin-git`
 
-`gitCommit({ remote, branch, dir?, message, authors })`
+`gitCommit({ remote, branch, dir?, message, authors, tag? })`
 
 Clones `remote` into `dir` (default: a directory under the OS temp dir, printed on every run), or
 reuses it if it's already a clean clone of that remote. Checks out `branch`, creating it from the
@@ -252,21 +252,45 @@ ones and commits. The first entry in `authors` is the commit author; the rest be
 `Co-authored-by` lines. The message and authors go through every scan plugin, and a finding stops
 the commit before the checkout changes; `allowLeaks` does not apply to them. It never pushes; it prints the push command.
 
+The plugin ends every commit message with a `ref-hash:` trailer holding the full SHA of the
+commit the tree was ejected from. That is how a public commit is traced back to its source, and a
+`message` that writes its own `ref-hash:` is refused.
+
 `message` can be a string or a function. The function receives the export context plus
-`previous`, the commit currently at the tip of the branch, which lets you write a changelog. This
-repository's own config does that:
+`previous`, the commit currently at the tip of the branch (`sha`, `message`, and `source`, the
+`ref-hash` it carries or `null`), which lets you write a changelog. This repository's own config
+does that:
 
 ```ts
 message: ({ outDir, source, previous }) => {
   const { version } = JSON.parse(readFileSync(join(outDir, 'packages/cli/package.json'), 'utf8'));
-  const from = previous?.message.match(/ref-hash: (\w+)/)?.[1];
-  const log = execSync(`git log --format='- %s' ${from ? `${from}..` : ''}${source.sha} -- projects/openrepo`, {
+  const from = previous?.source ? `${previous.source}..` : '';
+  const log = execSync(`git log --format='- %s' ${from}${source.sha} -- projects/openrepo`, {
     cwd: source.root,
     encoding: 'utf8',
   });
-  return `v${version}\n\n${log.trim()}\n\nref-hash: ${source.sha.slice(0, 8)}`;
+  return `v${version}\n\n${log.trim()}`;
 },
 ```
+
+#### Release tags
+
+`tag: { name: 'v1.2.0', reachableFrom: 'origin/main' }` puts a tag in the clone on the public commit
+that holds this eject's tree, so the public repo can build a release when the tag is pushed. Run the
+eject on the commit to release. The tag is local, like the commit: push it with the branch
+(`git push --atomic origin main refs/tags/v1.2.0`).
+
+- `reachableFrom` is a ref in the private repo. A commit that was never on it is refused before the
+  checkout changes, so a release can only come from your main line.
+- If the branch does not hold the tree yet, because its tip was ejected from an earlier commit, the
+  tree is committed first and the tag goes on that commit. The plugin never commits an older tree
+  on top of a newer one.
+- If the branch has moved past the commit, nothing is committed. The tag goes on the newest commit
+  ejected from it or from an ancestor of it, found through the `ref-hash:` trailers (a commit that
+  changed nothing public has no commit of its own). That commit must hold exactly the tree of the
+  eject, or it fails: the commit changed the public tree but was never ejected itself.
+- A tag already on that commit is left alone, so a rerun is safe. A tag on any other commit, or a
+  branch tip with no `ref-hash:` to trace it by, is an error.
 
 ## Writing a plugin
 
