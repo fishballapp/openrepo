@@ -80,20 +80,31 @@ const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean 
 const TRAILER = /^ref-hash: ([0-9a-f]+)$/m;
 const sourceOf = (message: string): string | null => TRAILER.exec(message)?.[1] ?? null;
 
-/** The commit `tag` points at on the remote, or `null` when the remote has no such tag. */
-const remoteTag = (cwd: string, tag: string): string | null => {
-  const out = git(cwd, ['ls-remote', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`]);
-  const shas = new Map(
-    out
-      .split('\n')
-      .filter(line => line !== '')
-      .map(line => {
-        const [sha = '', ref = ''] = line.split('\t');
-        return [ref, sha] as const;
-      }),
-  );
-  // An annotated tag lists the tag object, then the commit it peels to.
-  return shas.get(`refs/tags/${tag}^{}`) ?? shas.get(`refs/tags/${tag}`) ?? null;
+/** What origin has, asked once per run: the plugin never pushes, so one answer serves it throughout. */
+type Origin = {
+  defaultBranch: string | null;
+  branches: Set<string>;
+  /** The commit the release tag points at, or `null` when origin has no such tag or none was asked. */
+  tag: string | null;
+};
+
+const lsRemote = (cwd: string, tag: string | undefined): Origin => {
+  const tagRef = tag === undefined ? null : `refs/tags/${tag}`;
+  const out = git(cwd, [
+    'ls-remote',
+    '--symref',
+    'origin',
+    'HEAD',
+    'refs/heads/*',
+    ...(tagRef === null ? [] : [tagRef, `${tagRef}^{}`]),
+  ]);
+  const shas = new Map([...out.matchAll(/^([0-9a-f]+)\t(\S+)$/gm)].map(m => [m[2], m[1]]));
+  return {
+    defaultBranch: /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out)?.[1] ?? null,
+    branches: new Set([...out.matchAll(/\trefs\/heads\/(\S+)$/gm)].map(m => m[1] ?? '')),
+    // An annotated tag lists the tag object, then the commit it peels to.
+    tag: tagRef === null ? null : (shas.get(`${tagRef}^{}`) ?? shas.get(tagRef) ?? null),
+  };
 };
 
 /** The branch's first-parent history, newest first, with the private commit each was ejected from. */
@@ -143,13 +154,6 @@ const tagHolder = ({
   return ejected.sha;
 };
 
-const remoteHeads = (cwd: string): { defaultBranch: string | null; branches: Set<string> } => {
-  const out = git(cwd, ['ls-remote', '--symref', 'origin', 'HEAD', 'refs/heads/*']);
-  const defaultBranch = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out)?.[1] ?? null;
-  const branches = new Set([...out.matchAll(/\trefs\/heads\/(\S+)$/gm)].map(m => m[1] ?? ''));
-  return { defaultBranch, branches };
-};
-
 const slug = (remote: string): string =>
   remote
     .replace(/^[a-z+]+:\/\//, '')
@@ -157,38 +161,44 @@ const slug = (remote: string): string =>
     .replace(/\.git$/, '')
     .replace(/[^a-zA-Z0-9]+/g, '-');
 
-/** A clone of `remote` at `dir`, on `branch`, fast-forwarded to the remote if it has the branch. */
-const prepareCheckout = (dir: string, remote: string, branch: string): void => {
+/**
+ * A clone of `remote` at `dir`, on `branch`, fast-forwarded to the remote if it has the branch.
+ * Returns what the remote has, with where `tag` points on it.
+ */
+const prepareCheckout = (
+  dir: string,
+  remote: string,
+  branch: string,
+  tag: string | undefined,
+): Origin => {
   if (!existsSync(dir)) {
     mkdirSync(dirname(dir), { recursive: true });
     git(dirname(dir), ['clone', '-q', remote, dir]);
   } else {
-    const origin = tryGit(dir, ['remote', 'get-url', 'origin'])?.trim();
-    if (origin !== remote) {
-      throw new Error(`${dir} is not a clone of ${remote} (origin: ${origin ?? 'none'})`);
+    const url = tryGit(dir, ['remote', 'get-url', 'origin'])?.trim();
+    if (url !== remote) {
+      throw new Error(`${dir} is not a clone of ${remote} (origin: ${url ?? 'none'})`);
     }
     if (git(dir, ['status', '--porcelain']).trim() !== '') {
       throw new Error(`${dir} has uncommitted changes; commit or discard them first`);
     }
   }
   git(dir, ['fetch', '-q', 'origin']);
-  const { defaultBranch, branches } = remoteHeads(dir);
+  const origin = lsRemote(dir, tag);
+  const { defaultBranch, branches } = origin;
   const hasLocal = tryGit(dir, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`]) !== null;
   if (hasLocal) {
     git(dir, ['checkout', '-q', branch]);
     // Local commits from an earlier eject that is not pushed yet stay; a diverged remote is an error.
     if (branches.has(branch)) git(dir, ['merge', '-q', '--ff-only', `origin/${branch}`]);
-    return;
-  }
-  if (branches.has(branch)) {
+  } else if (branches.has(branch)) {
     git(dir, ['checkout', '-q', '-b', branch, `origin/${branch}`]);
-    return;
-  }
-  if (defaultBranch !== null && branches.has(defaultBranch)) {
+  } else if (defaultBranch !== null && branches.has(defaultBranch)) {
     git(dir, ['checkout', '-q', '-b', branch, `origin/${defaultBranch}`]);
-    return;
+  } else {
+    git(dir, ['checkout', '-q', '--orphan', branch]);
   }
-  git(dir, ['checkout', '-q', '--orphan', branch]);
+  return origin;
 };
 
 export const gitCommit = ({
@@ -212,7 +222,7 @@ export const gitCommit = ({
       dirOption === undefined
         ? join(tmpdir(), 'openrepo', slug(remote))
         : resolve(ctx.source.root, dirOption);
-    prepareCheckout(dir, remote, branch);
+    const origin = prepareCheckout(dir, remote, branch, tag?.name);
     const headSha = tryGit(dir, ['rev-parse', '--verify', '-q', 'HEAD'])?.trim();
     const tipMessage = headSha === undefined ? '' : git(dir, ['log', '-1', '--format=%B']).trim();
     const previous: Previous | null =
@@ -262,7 +272,7 @@ export const gitCommit = ({
     if (
       tag === undefined &&
       previous?.source != null &&
-      branch === remoteHeads(dir).defaultBranch &&
+      branch === origin.defaultBranch &&
       isAncestor(ctx.source.root, ctx.source.sha, previous.source) === true &&
       isAncestor(ctx.source.root, previous.source, ctx.source.sha) !== true
     ) {
@@ -276,10 +286,9 @@ export const gitCommit = ({
     if (tag !== undefined) {
       try {
         tagged = tagHolder({ dir, source: ctx.source, previous, hasChanges });
-        const existing = remoteTag(dir, tag.name);
-        if (existing !== null && existing !== tagged) {
+        if (origin.tag !== null && origin.tag !== tagged) {
           throw new Error(
-            `tag ${tag.name} is already on ${existing}, but this tree belongs on ${tagged ?? 'a new commit'}`,
+            `tag ${tag.name} is already on ${origin.tag}, but this tree belongs on ${tagged ?? 'a new commit'}`,
           );
         }
       } catch (error) {
@@ -323,7 +332,7 @@ export const gitCommit = ({
 
     if (tag !== undefined) {
       const commit = tagged ?? git(dir, ['rev-parse', 'HEAD']).trim();
-      if (remoteTag(dir, tag.name) === null) {
+      if (origin.tag === null) {
         // `-f`: a tag of an earlier run that never got pushed.
         git(dir, ['tag', '-f', tag.name, commit]);
         console.log(`tagged ${tag.name} on ${commit.slice(0, 12)}`);

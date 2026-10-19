@@ -3,8 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ScannedFile } from '@openrepo/cli';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gitCommit } from './index.ts';
+
+// Every test drives real git through whole ejects, some 20 git processes each, so its time is
+// mostly process start-up: well under 5 s on Linux, but past it on a Mac busy running every
+// package's tests at once.
+vi.setConfig({ testTimeout: 30_000 });
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
