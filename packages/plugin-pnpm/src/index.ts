@@ -5,12 +5,16 @@ import type { GenerateContext, Plugin, Repo } from '@openrepo/cli';
 import { parse, stringify } from 'yaml';
 import { assertOnlyPruned, parseWorkspaceLockfile, reachablePatches } from './lockfile.ts';
 import {
+  entryMatchesAny,
   type KeptPolicy,
   type Manifest,
   ManifestSchema,
   overridePackages,
+  PACKAGE_NAME_LISTS,
+  packageNameOf,
   publicWorkspaceYaml,
   type SettingsPolicy,
+  stringList,
   toPackages,
   WorkspaceYamlSchema,
   workspaceDirs,
@@ -89,7 +93,16 @@ const generate = async (
 
   // Pass 1 carries every override so the copied lockfile still matches its own `overrides:`
   // section; pass 2 drops the ones whose target the pruned graph no longer contains.
-  const all = { overrides: source.overrides ?? {}, allowBuilds: source.allowBuilds ?? {} };
+  const all: KeptPolicy = {
+    overrides: source.overrides ?? {},
+    allowBuilds: source.allowBuilds ?? {},
+    nameLists: Object.fromEntries(
+      PACKAGE_NAME_LISTS.flatMap(key => {
+        const entries = stringList(source[key]);
+        return entries === undefined ? [] : [[key, entries]];
+      }),
+    ),
+  };
   emit({
     path: 'pnpm-workspace.yaml',
     content: stringify(publicWorkspaceYaml(source, publicDirs, manifests, all, settings)),
@@ -111,6 +124,7 @@ const generate = async (
   const survives = (name: string) =>
     workspaceNames.has(name) ||
     Object.keys(pass1.packages).some(k => k === name || k.startsWith(`${name}@`));
+  const present = new Set([...workspaceNames, ...Object.keys(pass1.packages).map(packageNameOf)]);
   const kept: KeptPolicy = {
     overrides: Object.fromEntries(
       Object.entries(all.overrides).filter(([key]) => overridePackages(key).every(survives)),
@@ -118,15 +132,23 @@ const generate = async (
     allowBuilds: Object.fromEntries(
       Object.entries(all.allowBuilds).filter(([name]) => survives(name)),
     ),
+    // pass 1 held the whole lists, so what its lockfile lacks cannot be needed by the pruned graph.
+    nameLists: Object.fromEntries(
+      Object.entries(all.nameLists ?? {}).map(([key, entries]) => [
+        key,
+        entries.filter(entry => entryMatchesAny(entry, present)),
+      ]),
+    ),
   };
   const workspace = publicWorkspaceYaml(source, publicDirs, manifests, kept, settings);
   emit({ path: 'pnpm-workspace.yaml', content: stringify(workspace) });
-  const dropped =
-    Object.keys(all.overrides).length +
-    Object.keys(all.allowBuilds).length -
-    Object.keys(kept.overrides).length -
-    Object.keys(kept.allowBuilds).length;
-  if (dropped > 0) {
+  const count = ({ overrides, allowBuilds, nameLists = {} }: KeptPolicy) =>
+    Object.keys(overrides).length +
+    Object.keys(allowBuilds).length +
+    Object.values(nameLists).reduce((total, entries) => total + entries.length, 0);
+  // Pruned again under the smaller policy, which proves the entries left out were not needed: a
+  // release-age exception a kept package still relied on would fail pnpm's check here.
+  if (count(all) > count(kept)) {
     prune(staging);
     assertPruned(parseWorkspaceLockfile(readFileSync(join(staging, 'pnpm-lock.yaml'), 'utf8')));
   }

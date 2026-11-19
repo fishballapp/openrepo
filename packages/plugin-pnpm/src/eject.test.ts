@@ -44,7 +44,7 @@ describe('pnpm + typescript end to end', () => {
     write(root, {
       'package.json': json({ name: 'mono', private: true, type: 'module', packageManager: pm }),
       'pnpm-workspace.yaml':
-        'packages:\n  - packages/*\n  - projects/*/packages/*\nstrictPeerDependencies: false\n',
+        'packages:\n  - packages/*\n  - projects/*/packages/*\nstrictPeerDependencies: false\nminimumReleaseAge: 10080\nminimumReleaseAgeExclude:\n  - "@f/*"\n  - "@other/*"\n  - ghost@1.0.0\n',
       'tsconfig.base.json': json({ compilerOptions: { strict: true, noEmit: true } }),
       'packages/shared/package.json': json({
         name: '@f/shared',
@@ -102,6 +102,9 @@ describe('pnpm + typescript end to end', () => {
     expect(workspace).toEqual({
       packages: ['packages/a', 'packages/shared'],
       strictPeerDependencies: false,
+      minimumReleaseAge: 10080,
+      // `@other/*` and `ghost` match nothing the tree has, so they stay in the private repo.
+      minimumReleaseAgeExclude: ['@f/*'],
     });
     const lock = parseWorkspaceLockfile(readFileSync(join(out, 'pnpm-lock.yaml'), 'utf8'));
     expect(Object.keys(lock.importers).toSorted()).toEqual(['.', 'packages/a', 'packages/shared']);

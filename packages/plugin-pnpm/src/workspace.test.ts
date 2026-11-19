@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { assertOnlyPruned, parseLockfile, reachablePatches } from './lockfile.ts';
 import {
+  entryMatchesAny,
   overridePackages,
   overrideTarget,
+  packageNameOf,
   publicWorkspaceYaml,
   toPackages,
   workspaceDependencyNames,
@@ -279,5 +281,63 @@ describe('reachablePatches', () => {
     expect(reachablePatches(after, { 'lib@1.2.3': 'p.patch', 'gone@1': 'g.patch' })).toEqual([
       'lib@1.2.3',
     ]);
+  });
+});
+
+describe('packageNameOf', () => {
+  it('takes the name off a lockfile key or a list entry', () => {
+    expect(packageNameOf('vite@8.0.1')).toBe('vite');
+    expect(packageNameOf('@scope/name@1.2.3(peer@2.0.0)')).toBe('@scope/name');
+    expect(packageNameOf('@scope/*')).toBe('@scope/*');
+    expect(packageNameOf('name@1.0.0 || 1.0.1')).toBe('name');
+    expect(packageNameOf(' plain ')).toBe('plain');
+  });
+});
+
+describe('entryMatchesAny', () => {
+  const names = new Set(['@acme/tool', 'left-pad', 'vite']);
+
+  it('matches a name, a name with versions, and a * pattern', () => {
+    expect(entryMatchesAny('vite', names)).toBe(true);
+    expect(entryMatchesAny('left-pad@1.3.0 || 1.2.0', names)).toBe(true);
+    expect(entryMatchesAny('@acme/*', names)).toBe(true);
+    expect(entryMatchesAny('left-*', names)).toBe(true);
+  });
+
+  it('does not match what the tree lacks, and treats everything but * literally', () => {
+    expect(entryMatchesAny('@other/*', names)).toBe(false);
+    expect(entryMatchesAny('ghost', names)).toBe(false);
+    expect(entryMatchesAny('vit', names)).toBe(false);
+    expect(entryMatchesAny('v.te', names)).toBe(false);
+    expect(entryMatchesAny('@acme', names)).toBe(false);
+  });
+});
+
+describe('publicWorkspaceYaml name lists', () => {
+  const source = {
+    packages: ['x'],
+    minimumReleaseAge: 10080,
+    minimumReleaseAgeExclude: ['@mine/*', '@theirs/*'],
+    onlyBuiltDependencies: ['esbuild', 'sharp'],
+  };
+
+  it('writes the kept entries of each list and leaves a list with none out', () => {
+    expect(
+      publicWorkspaceYaml(source, ['a'], [], {
+        overrides: {},
+        allowBuilds: {},
+        nameLists: { minimumReleaseAgeExclude: ['@mine/*'], onlyBuiltDependencies: [] },
+      }),
+    ).toEqual({
+      packages: ['a'],
+      minimumReleaseAge: 10080,
+      minimumReleaseAgeExclude: ['@mine/*'],
+    });
+  });
+
+  it('copies a list verbatim when no pruned list is given for it', () => {
+    expect(
+      publicWorkspaceYaml(source, ['a'], [], { overrides: {}, allowBuilds: {} }),
+    ).toMatchObject({ minimumReleaseAgeExclude: ['@mine/*', '@theirs/*'] });
   });
 });

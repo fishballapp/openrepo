@@ -110,6 +110,46 @@ const classify = (
   );
 };
 
+/**
+ * Settings that are lists of package names (or `@scope/*` patterns). Copied whole they would name
+ * every package of the private repo, so the public file keeps the entries that match a package its
+ * own lockfile has.
+ */
+export const PACKAGE_NAME_LISTS = [
+  'minimumReleaseAgeExclude',
+  'onlyBuiltDependencies',
+  'neverBuiltDependencies',
+  'ignoredBuiltDependencies',
+] as const;
+
+/** A setting's value as a list of strings, or `undefined` when it is anything else. */
+export const stringList = (value: unknown): string[] | undefined =>
+  Array.isArray(value) && value.every(item => typeof item === 'string') ? value : undefined;
+
+/** The name in a lockfile package key or a list entry: `@s/n@1.0.0(peer@2)` → `@s/n`, `a@1 || 2` → `a`. */
+export const packageNameOf = (keyOrEntry: string): string => {
+  const trimmed = keyOrEntry.trim();
+  const at = trimmed.indexOf('@', 1);
+  return at === -1 ? trimmed : trimmed.slice(0, at);
+};
+
+/**
+ * Whether a list entry names a package among `names`. An entry is a name or a `*` pattern
+ * (`@scope/*`), with an optional version part (`name@1.0.0 || 1.0.1`) that is not judged: a package
+ * present at any version keeps its entry.
+ */
+export const entryMatchesAny = (entry: string, names: ReadonlySet<string>): boolean => {
+  const pattern = packageNameOf(entry);
+  if (!pattern.includes('*')) return names.has(pattern);
+  const regex = new RegExp(
+    `^${pattern
+      .split('*')
+      .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('.*')}$`,
+  );
+  return [...names].some(name => regex.test(name));
+};
+
 /** Dirs of every manifest a pnpm `packages` glob list selects (negations honoured). */
 export const workspaceDirs = (globs: readonly string[], files: readonly string[]): string[] => {
   const manifestDirs = files.filter(f => f.endsWith('/package.json')).map(f => posix.dirname(f));
@@ -198,16 +238,20 @@ const pick = (source: Record<string, string> | undefined, names: Iterable<string
 export type KeptPolicy = {
   overrides: Readonly<Record<string, string>>;
   allowBuilds: Readonly<Record<string, boolean>>;
+  /** The kept entries of each `PACKAGE_NAME_LISTS` setting the source has; an empty list is left out. */
+  nameLists?: Readonly<Record<string, readonly string[]>>;
 };
 
 export const publicWorkspaceYaml = (
   source: WorkspaceYaml,
   packageDirs: readonly string[],
   manifests: readonly Manifest[],
-  { overrides, allowBuilds }: KeptPolicy,
+  { overrides, allowBuilds, nameLists = {} }: KeptPolicy,
   settings: SettingsPolicy = {},
 ): Record<string, unknown> => {
-  const kept = Object.keys(source).filter(key => classify(key, settings) === 'keep');
+  const kept = Object.keys(source).filter(
+    key => classify(key, settings) === 'keep' && !(key in nameLists),
+  );
   const specs = [
     ...manifests.flatMap(allDependencies),
     ...Object.entries(overrides).map(([key, spec]) => [overrideTarget(key), spec] as const),
@@ -224,6 +268,7 @@ export const publicWorkspaceYaml = (
   return {
     packages: packageDirs.toSorted(),
     ...Object.fromEntries(kept.map(k => [k, source[k]])),
+    ...Object.fromEntries(Object.entries(nameLists).filter(([, entries]) => entries.length > 0)),
     ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
     ...(Object.keys(allowBuilds).length > 0 ? { allowBuilds } : {}),
     ...(wanted.has('default')

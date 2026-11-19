@@ -207,6 +207,12 @@ repo (`pnpmfile`, `sharedWorkspaceLockfile`, `useLockfile`). A setting the plugi
 before is also rejected; the error tells you to add it to `settings: { keep: [...] }` or
 `settings: { drop: [...] }`.
 
+A setting that lists packages is cut to the entries that match a package in the public lockfile
+(`name`, or a `*` pattern like `@scope/*`; a version part is not judged): `minimumReleaseAgeExclude`,
+`onlyBuiltDependencies`, `neverBuiltDependencies`, `ignoredBuiltDependencies`, like `overrides` and
+`allowBuilds` before them. The public file names nothing only the private repo's other projects
+use, and pnpm checks the cut lockfile again under the smaller lists.
+
 ### `@openrepo/plugin-typescript`
 
 `typescript()`
