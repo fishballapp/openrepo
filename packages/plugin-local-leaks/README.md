@@ -15,6 +15,11 @@ plugins: [localLeaks()]
 - `local-leaks/env-file`: `.env` and `.env.*` files. `.env.example`, `.env.sample`,
   `.env.template` and `.env.schema` are fine.
 
+- `local-leaks/private-term`: with `localLeaks({ terms: [...] })`, any of those words, whole and in
+  any letter case, in a file or its path. Names of other private work belong here. Keep the list out
+  of the tree it guards, since it would leak the names itself; a finding shows the first four
+  characters of the term only.
+
 A finding meant to be public, like a test fixture, goes in the config's `allowLeaks`:
 
 ```ts

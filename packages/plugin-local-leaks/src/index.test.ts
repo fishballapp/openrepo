@@ -170,6 +170,67 @@ describe('findLocalLeaks', () => {
   });
 });
 
+describe('private terms', () => {
+  const machine = { homedir: '', repoRoot: '' };
+
+  it('finds a term as a whole word in any letter case, in content and in the path', () => {
+    const leaks = findLocalLeaks(
+      [
+        { path: 'src/acme-billing.ts', content: 'clean\n// built for Acme, not acmetool\nAcme.x' },
+        { path: 'src/clean.ts', content: 'const word = "acmetool";' },
+      ],
+      { ...machine, terms: ['acme'] },
+    );
+
+    expect(leaks).toEqual([
+      {
+        path: 'src/acme-billing.ts',
+        line: 0,
+        rule: 'private-term',
+        isSecret: true,
+        excerpt: 'acme',
+      },
+      {
+        path: 'src/acme-billing.ts',
+        line: 2,
+        rule: 'private-term',
+        isSecret: true,
+        excerpt: 'Acme',
+      },
+      {
+        path: 'src/acme-billing.ts',
+        line: 3,
+        rule: 'private-term',
+        isSecret: true,
+        excerpt: 'Acme',
+      },
+    ]);
+  });
+
+  it('matches a term literally, not as a pattern', () => {
+    const leaks = findLocalLeaks([{ path: 'a.txt', content: 'a.c and abc and (x)' }], {
+      ...machine,
+      terms: ['a.c', '(x)'],
+    });
+
+    expect(leaks.map(leak => leak.excerpt)).toEqual(['a.c']);
+  });
+
+  it('finds nothing with no terms', () => {
+    expect(findLocalLeaks([{ path: 'a.txt', content: 'acme' }], machine)).toEqual([]);
+  });
+
+  it('is on when the plugin is given terms, and hides all but four characters of the term', async () => {
+    const files = [{ path: 'a.txt', content: 'secretproject here' }];
+    const source = { root: '/srv/private-repo', sha: 'abc' };
+
+    expect(await localLeaks().scan?.({ files, source })).toEqual([]);
+    expect(await localLeaks({ terms: ['secretproject'] }).scan?.({ files, source })).toEqual([
+      { path: 'a.txt', line: 1, rule: 'private-term', excerpt: 'secretproject', isSecret: true },
+    ]);
+  });
+});
+
 describe('localLeaks', () => {
   it('scans for the private repo root it is handed', async () => {
     const files = [{ path: 'a.txt', content: 'see /srv/private-repo/projects/x' }];
